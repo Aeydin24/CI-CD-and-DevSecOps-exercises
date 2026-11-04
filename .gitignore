@@ -1,0 +1,48 @@
+﻿
+# .NET build artifacts
+**/bin/
+**/obj/
+**/out/
+artifacts/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# Visual Studio Code
+.vscode/
+
+# Unit testing
+**/TestResults/
+*.trx
+coverage/
+coverage.*
+*.coverage
+*.coveragexml
+
+# CodeQL
+codeql-db/
+codeql-database/
+order-codeql-db/
+*.sarif
+*.sarif.json
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+
+# Operating system
+.DS_Store
+Thumbs.db

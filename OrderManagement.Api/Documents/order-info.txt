@@ -1,0 +1,4 @@
+﻿Order Management API
+
+Orders can be created, cancelled, and delivered.
+Only orders with status Created can be modified.
