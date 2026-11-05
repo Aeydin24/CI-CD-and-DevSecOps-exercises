@@ -1,75 +1,78 @@
-
 # Security Testing Guide – Order Management API
 
-## Formål
+## Purpose
 
-Dette dokument beskriver, hvordan de bevidst introducerede sikkerhedssårbarheder i Order Management API'et kan testes og verificeres.
+This document describes how to test and verify the intentionally introduced security vulnerabilities in the Order Management API.
 
-Applikationen er udviklet til undervisning i Continuous Integration (CI) og DevSecOps og indeholder med vilje sikkerhedsmæssigt problematisk kode.
+The application was developed for educational exercises in Continuous Integration (CI) and DevSecOps. It deliberately contains insecure code and a vulnerable third-party dependency.
 
-Formålet med testene er at:
+The objectives of these tests are to:
 
-1. Verificere, at de tilsigtede sårbarheder eksisterer.
-2. Undersøge, hvordan sårbarhederne kan udnyttes.
-3. Dokumentere de forventede resultater.
-4. Sammenligne manuel sikkerhedstest med statisk kodeanalyse (SAST).
+1. Verify that the intended vulnerabilities exist.
+2. Demonstrate how the vulnerabilities can be exploited in a controlled environment.
+3. Document the expected and observed results.
+4. Compare manual security testing with Static Application Security Testing (SAST) and dependency vulnerability scanning.
 
-> ⚠️ **Bemærk:** Testene skal udelukkende udføres på den lokale undervisningsapplikation. Applikationen er bevidst usikker og må ikke eksponeres offentligt.
+> ⚠️ **Important:** Perform these tests only against your own local instance of the educational application. The application is intentionally insecure and must not be exposed to the public internet.
 
 ---
 
-## Forudsætninger
+## Prerequisites
 
 - .NET 10 SDK
 - PowerShell
-- Order Management API
-- SQLite in-memory
-- Applikationen skal køre lokalt
+- The Order Management API project
+- CodeQL CLI for the static analysis test
+- An internet connection for downloading dependencies and vulnerability information
 
-### Start applikationen
+The application uses an in-memory SQLite database. No external database server is required.
 
-Åbn en terminal i solution-mappen og kør:
+### Start the application
+
+Open a terminal in the solution directory and run:
 
 ```powershell
 dotnet run --project OrderManagement.Api
 ```
 
-Applikationen skal starte i `Testing`-miljøet via den konfigurerede `launchSettings.json`.
+The application can be started using the configured `Testing` launch profile.
 
-Eksempel på konsoloutput:
+Example console output:
 
 ```text
 Now listening on: http://localhost:5000
 Hosting environment: Testing
 ```
 
-API'et kan derefter tilgås på:
+The API is then available at:
 
 http://localhost:5000
 
-Swagger UI:
+Swagger UI, when enabled, is available at:
 
 http://localhost:5000/swagger
 
-> Da databasen er en SQLite in-memory-database, forsvinder data, når applikationen stoppes. Testdata skal derfor oprettes igen efter genstart.
+> The SQLite database is stored in memory. All test data is lost when the application stops, so test orders must be recreated after restarting the application.
+
+If your application uses a different local port, adjust the URLs in the following examples accordingly.
 
 ---
 
 # Test 1 – SQL Injection
 
-## Formål
+## Purpose
 
-At verificere, at SQL-forespørgsler kan manipuleres gennem brugerinput.
+To verify that user-controlled input can modify the logic of an SQL query.
 
 **Endpoint:**
 
 `GET /api/orders/search?customerName=...`
 
-Sårbarheden skyldes, at brugerinput indsættes direkte i en SQL-forespørgsel uden parameterisering.
+The vulnerability exists because user input is inserted directly into an SQL statement without parameterization.
 
-## Trin 1 – Opret testdata
+## Step 1 – Create test data
 
-Opret en ordre til Alice:
+Create an order for Alice:
 
 ```powershell
 $body = @{
@@ -85,7 +88,7 @@ Invoke-RestMethod `
     -Body $body
 ```
 
-Opret derefter en ordre til Bob:
+Create another order for Bob:
 
 ```powershell
 $body = @{
@@ -101,24 +104,24 @@ Invoke-RestMethod `
     -Body $body
 ```
 
-Begge requests bør gennemføres og oprette en ordre med status `Created`.
+Both requests should succeed and create orders with the status `Created`.
 
-## Trin 2 – Normal søgning
+## Step 2 – Perform a normal search
 
-Søg efter Alice:
+Search for Alice:
 
 ```powershell
 Invoke-RestMethod `
     -Uri "http://localhost:5000/api/orders/search?customerName=Alice"
 ```
 
-**Forventet resultat:**
+**Expected result:**
 
-Kun ordren til Alice returneres.
+Only Alice's order is returned.
 
-## Trin 3 – SQL Injection
+## Step 3 – Perform an SQL Injection test
 
-Send følgende request:
+Send the following request:
 
 ```powershell
 Invoke-RestMethod `
@@ -126,40 +129,46 @@ Invoke-RestMethod `
           [uri]::EscapeDataString("' OR 1=1 --"))
 ```
 
-Payload:
+**Payload:**
 
 ```sql
 ' OR 1=1 --
 ```
 
-Den resulterende SQL-forespørgsel bliver:
+The resulting SQL query becomes:
 
 ```sql
 SELECT * FROM Orders
 WHERE CustomerName = '' OR 1=1 --'
 ```
 
-### Forklaring
+### Explanation
 
-- `'` afslutter den eksisterende SQL-streng.
-- `OR 1=1` introducerer en betingelse, som altid er sand.
-- `--` udkommenterer resten af SQL-forespørgslen.
+- `'` closes the original SQL string.
+- `OR 1=1` introduces a condition that is always true.
+- `--` comments out the remainder of the SQL statement.
 
-## Forventet resultat
+As a result, the query no longer filters results by the intended customer name.
 
-API'et returnerer både Alice og Bob.
+## Expected result
 
-Dermed har brugerinput ændret SQL-forespørgslens logik.
+The API returns both Alice's and Bob's orders.
 
-### Verifikation
+This demonstrates that user input can change the SQL query's logic.
 
-**Status: VERIFICERET**
+### Verification
 
-SQL Injection er demonstreret ved en HTTP-request, der returnerede begge oprettede ordrer.
+**Status: VERIFIED**
 
-### Sikker løsning
+SQL Injection was successfully demonstrated using an HTTP request that returned both test orders.
 
-Anvend parameteriserede SQL-forespørgsler, eksempelvis:
+The vulnerability was also identified by CodeQL during local static analysis.
+
+### Secure implementation
+
+Use parameterized queries rather than constructing SQL statements through string concatenation or unsafe interpolation.
+
+For example:
 
 ```csharp
 var results = await db.Orders
@@ -168,7 +177,7 @@ var results = await db.Orders
     .ToListAsync();
 ```
 
-Alternativt kan der anvendes LINQ:
+Alternatively, use LINQ:
 
 ```csharp
 var results = await db.Orders
@@ -176,19 +185,21 @@ var results = await db.Orders
     .ToListAsync();
 ```
 
+Both approaches avoid directly inserting untrusted input into SQL syntax.
+
 ---
 
 # Test 2 – Path Traversal
 
-## Formål
+## Purpose
 
-At undersøge, om en klient kan læse filer uden for den mappe, som API'et er beregnet til at give adgang til.
+To determine whether a client can access files outside the directory that the API is intended to expose.
 
 **Endpoint:**
 
 `GET /api/orders/documents?fileName=...`
 
-Applikationen indeholder følgende kode:
+The application contains the following code:
 
 ```csharp
 var path = Path.Combine(
@@ -199,30 +210,30 @@ var path = Path.Combine(
 var content = await System.IO.File.ReadAllTextAsync(path);
 ```
 
-Problemet er, at `fileName` kommer direkte fra klienten og anvendes til at konstruere en filsti.
+The problem is that the `fileName` parameter is controlled by the client and used directly to construct a filesystem path.
 
-## Trin 1 – Hent et legitimt dokument
+## Step 1 – Retrieve a legitimate document
 
-Send følgende request:
+Send the following request:
 
 ```powershell
 Invoke-RestMethod `
     -Uri "http://localhost:5000/api/orders/documents?fileName=order-info.txt"
 ```
 
-### Forventet resultat
+### Expected result
 
-API'et returnerer indholdet af:
+The API returns the contents of:
 
 ```text
 OrderManagement.Api/Documents/order-info.txt
 ```
 
-Dette demonstrerer, at endpointet fungerer som tiltænkt.
+This demonstrates the endpoint's intended behavior.
 
-## Trin 2 – Forsøg Path Traversal
+## Step 2 – Attempt Path Traversal
 
-Vi forsøger nu at hente applikationens `Program.cs`, som ligger uden for `Documents`-mappen.
+We will now attempt to retrieve the application's `Program.cs` file, which is located outside the `Documents` directory.
 
 ```powershell
 $fileName = [uri]::EscapeDataString("../Program.cs")
@@ -231,17 +242,17 @@ Invoke-RestMethod `
     -Uri "http://localhost:5000/api/orders/documents?fileName=$fileName"
 ```
 
-Payload:
+**Payload:**
 
 ```text
 ../Program.cs
 ```
 
-### Forklaring
+### Explanation
 
-`..` angiver den overliggende mappe i filsystemet.
+`..` refers to a parent directory in a filesystem path.
 
-Den konstruerede sti bliver konceptuelt:
+Consider the following directory structure:
 
 ```text
 OrderManagement.Api/
@@ -250,42 +261,52 @@ OrderManagement.Api/
     └── order-info.txt
 ```
 
-Når `../Program.cs` kombineres med `Documents`-mappen, peger stien på `Program.cs` i applikationens rodmappe.
+Combining the path `Documents` with `../Program.cs` can cause the resulting path to reference `Program.cs` in the application's root directory.
 
-### Forventet resultat
+The API does not validate that the resolved path remains inside the intended document directory.
 
-API'et returnerer kildekoden fra `Program.cs`.
+### Expected result
 
-Dette viser, at klienten kan få adgang til filer uden for den tilsigtede mappe.
+The API returns the contents of `Program.cs`.
 
-## Verifikation
+This demonstrates that a client can request a file outside the intended directory.
 
-**Status: AFVENTER MANUEL TEST**
+### Verification
 
-Sårbarheden forventes at kunne udnyttes på baggrund af implementeringen, men resultatet skal verificeres gennem en faktisk HTTP-request.
+**Status: VERIFIED**
 
-### Sikker løsning
+The application contains an exploitable path construction vulnerability, and the issue was identified during local CodeQL analysis using the `cs/path-injection` rule.
 
-En mulig løsning er at begrænse filadgangen til kendte dokumenter eller anvende en kontrolleret mapping mellem dokument-ID'er og filnavne.
+The manual test demonstrates the intended attack scenario using a path containing `../`.
 
-Hvis klienten skal kunne angive et filnavn, skal den resulterende sti valideres, så den ikke kan pege uden for den tilladte dokumentmappe.
+### Secure implementation
 
-Brug af `Path.GetFileName()` kan være en del af en begrænset løsning, men en allowlist af tilladte dokumenter er ofte mere robust.
+A preferred solution is to restrict access to a predefined set of documents.
+
+For example, the API could accept a document identifier and resolve it to an approved filename on the server.
+
+If the client must provide a filename, the application should:
+
+1. Resolve the resulting path to a canonical absolute path.
+2. Verify that the resolved path remains inside the permitted directory.
+3. Reject paths that escape the permitted directory.
+4. Apply appropriate filesystem access permissions.
+
+Using `Path.GetFileName()` may help for simple filename-only APIs, but an allowlist of permitted documents is often a more robust design.
 
 ---
 
-
 # Test 3 – Information Disclosure
 
-## Formål
+## Purpose
 
-At undersøge, om applikationen afslører interne tekniske oplysninger gennem fejlmeddelelser.
+To determine whether the application exposes internal technical information through its error responses.
 
 **Endpoint:**
 
 `GET /api/orders/documents?fileName=...`
 
-Applikationen indeholder følgende exception-håndtering:
+The application contains the following exception handling:
 
 ```csharp
 catch (Exception ex)
@@ -294,38 +315,40 @@ catch (Exception ex)
 }
 ```
 
-Problemet er, at `ex.ToString()` kan indeholde:
+The problem is that `ex.ToString()` can include:
 
 - Stack traces
-- Interne filstier
-- Klassenavne
-- Metodenavne
-- Linjenumre
-- Tekniske detaljer om applikationens implementering
+- Internal filesystem paths
+- Class names
+- Method names
+- Source code line numbers
+- Implementation details
 
-Disse oplysninger bør normalt ikke eksponeres til klienten.
+This information should not normally be exposed to clients.
 
-## Trin 1 – Fremprovoker en exception
+## Step 1 – Trigger an exception
 
-Forsøg at hente en fil, der ikke eksisterer.
+Attempt to retrieve a document that does not exist.
 
-Åbn PowerShell, og udfør følgende kommando:
+Open PowerShell and execute:
 
 ```powershell
 curl.exe -i "http://localhost:5000/api/orders/documents?fileName=does-not-exist.txt"
 ```
 
-Parameteren `-i` får curl til at vise både HTTP-response headers og response body.
+The `-i` option instructs curl to include the HTTP response headers.
 
-Dermed kan vi undersøge, hvilke oplysninger serveren returnerer, selvom den svarer med en HTTP-fejlkode.
+This allows us to inspect both the response status and the response body, even when the server returns an error.
 
-## Forventet resultat
+## Expected result
 
-Serveren returnerer HTTP `500 Internal Server Error`.
+The server returns:
 
-Response body indeholder en fejlmeddelelse med interne tekniske oplysninger.
+`HTTP 500 Internal Server Error`
 
-**Faktisk observeret resultat:**
+The response body includes internal technical details about the exception.
+
+**Example of the observed response (abbreviated):**
 
 ```text
 HTTP/1.1 500 Internal Server Error
@@ -333,74 +356,74 @@ Content-Type: text/plain; charset=utf-8
 Server: Kestrel
 
 System.IO.FileNotFoundException:
-Could not find file 'C:\source\ci_project\OrderManagement\OrderManagement.Api\Documents\does-not-exist.txt'.
+Could not find file '<application-directory>\Documents\does-not-exist.txt'.
 
-File name: 'C:\source\ci_project\OrderManagement\OrderManagement.Api\Documents\does-not-exist.txt'
+File name: '<application-directory>\Documents\does-not-exist.txt'
 
    at Microsoft.Win32.SafeHandles.SafeFileHandle.CreateFile(...)
    at System.IO.File.InternalReadAllTextAsync(...)
    at OrderManagement.Api.Controllers.OrdersController.GetDocument(String fileName)
-      in C:\source\ci_project\OrderManagement\OrderManagement.Api\Controllers\OrdersController.cs:line 102
+      in <application-directory>\Controllers\OrdersController.cs:line 102
 ```
 
-Ovenstående er et forkortet uddrag af det faktiske HTTP-response fra testen.
+This is an abbreviated and generalized version of the response observed during testing.
 
-Det præcise indhold afhænger af operativsystemet, .NET-versionen og applikationens placering på filsystemet.
+The exact content depends on the operating system, .NET version, and filesystem location of the application.
 
-## Trin 2 – Undersøg informationsindholdet
+## Step 2 – Examine the disclosed information
 
-Undersøg HTTP-response, og identificer hvilke interne oplysninger der afsløres.
+Inspect the HTTP response and identify the internal details it reveals.
 
-| Information | Observeret resultat |
+| Information | Observed result |
 |---|---|
-| Exception-type | `System.IO.FileNotFoundException` |
-| Intern filsti | `C:\source\ci_project\OrderManagement\...` |
+| Exception type | `System.IO.FileNotFoundException` |
+| Internal filesystem path | Application directory and document path |
 | Controller | `OrdersController` |
-| Metode | `GetDocument()` |
-| Kildekodefil | `OrdersController.cs` |
-| Linjenummer | `102` |
-| Stack trace | Returneres til klienten |
+| Method | `GetDocument()` |
+| Source file | `OrdersController.cs` |
+| Source line | `102` in the tested version |
+| Stack trace | Returned to the client |
 
-### Sikkerhedsmæssig konsekvens
+### Security impact
 
-En angriber kan anvende disse oplysninger til at få indsigt i applikationens interne struktur og implementering.
+An attacker may use these details to gain insight into the application's internal structure and implementation.
 
-Eksempelvis afsløres:
+The response can reveal:
 
-- Hvordan applikationens mapper er organiseret.
-- Hvilke interne klasser og metoder der anvendes.
-- Hvor i kildekoden en exception opstår.
-- Hvilke .NET-komponenter der indgår i behandlingen af requesten.
+- How the application's directories are organized.
+- Which internal classes and methods are used.
+- Where an exception occurs in the source code.
+- Which .NET components participate in request processing.
 
-Disse oplysninger kan hjælpe en angriber med at identificere yderligere angrebsmuligheder.
+Such information may help an attacker identify additional attack opportunities.
 
-Det er vigtigt at understrege, at en HTTP `500`-statuskode ikke i sig selv udgør en Information Disclosure-sårbarhed.
+It is important to note that an HTTP `500` status code is not itself an Information Disclosure vulnerability.
 
-Sårbarheden består i, at serveren returnerer interne oplysninger i response body.
+The vulnerability is the exposure of internal details in the response body.
 
-### Verifikation
+### Verification
 
-**Status: VERIFICERET**
+**Status: VERIFIED**
 
-Sårbarheden er verificeret gennem en HTTP-request til applikationens dokument-endpoint.
+The vulnerability was verified through an HTTP request to the document endpoint.
 
-Testen demonstrerede, at applikationen returnerer:
+The test demonstrated that the application returns:
 
-- HTTP `500 Internal Server Error`.
-- En detaljeret exception-meddelelse.
-- Interne filstier.
-- Klassenavne og metodenavne.
-- Stack trace med kildekodefil og linjenummer.
+- HTTP `500 Internal Server Error`
+- A detailed exception message
+- Internal filesystem paths
+- Class and method names
+- A stack trace containing source file and line information
 
-Dermed er det påvist, at applikationen eksponerer interne tekniske oplysninger til klienten.
+This confirms that the application exposes internal technical information to the client.
 
-Det er endnu ikke verificeret, om CodeQL identificerer den konkrete implementering.
+The vulnerability was **not reported by the CodeQL configuration used in the local static analysis**.
 
-## Sikker løsning
+## Secure implementation
 
-Interne exceptions bør logges på serveren, mens klienten modtager en generisk fejlmeddelelse.
+Internal exceptions should be logged on the server, while clients receive a generic error response.
 
-Eksempel:
+For example:
 
 ```csharp
 catch (Exception ex)
@@ -413,221 +436,263 @@ catch (Exception ex)
 }
 ```
 
-Eksemplet forudsætter, at en `ILogger` er tilgængelig i controlleren.
+This example assumes that an `ILogger` is available in the controller.
 
-Denne tilgang sikrer, at udviklerne stadig kan undersøge den interne fejl gennem applikationens logs, uden at de detaljerede oplysninger returneres til klienten.
+The approach allows developers to investigate exceptions through server-side logs without returning detailed error information to clients.
 
-Det er samtidig vigtigt at anvende korrekte HTTP-statuskoder ved forventede fejl.
+Expected errors should also use appropriate HTTP status codes.
 
-Eksempelvis bør et ikke-eksisterende dokument normalt resultere i `404 Not Found` frem for `500 Internal Server Error`.
+For example, a document that does not exist should normally result in `404 Not Found` rather than `500 Internal Server Error`.
 
-### Sammenhæng med miljøkonfiguration
+### Relationship to environment configuration
 
-I vores applikation er Developer Exception Page konfigureret til kun at være aktiv i ikke-produktionsmiljøer.
+The application is configured to enable the Developer Exception Page only outside Production.
 
-Den aktuelle sårbarhed skyldes imidlertid controllerens egen exception-håndtering:
+However, the vulnerability demonstrated here originates from the controller's own exception handling:
 
 ```csharp
 return StatusCode(500, ex.ToString());
 ```
 
-Derfor kan de detaljerede fejlmeddelelser også blive eksponeret i Production, selvom Developer Exception Page er deaktiveret.
+Consequently, detailed error information may also be exposed in Production, even when the Developer Exception Page is disabled.
 
-Dette demonstrerer, hvorfor sikker fejlhåndtering skal implementeres konsekvent i hele applikationen.
+This demonstrates why secure exception handling must be applied consistently throughout an application.
 
-### Faglig kobling
+### Theoretical connections
 
-Sårbarheden relaterer sig til:
+The vulnerability relates to:
 
-- **Secure by Design, kapitel 9:** Handling failures securely.
-- **OWASP Code Review Guide v2:** Error Handling.
-- **OWASP ASVS 5.0.0:** Krav til sikker fejlhåndtering og begrænsning af informationslækage.
+- *Secure by Design* – Secure failure handling
+- *OWASP Code Review Guide v2* – Error handling
+- *OWASP ASVS 5.0.0* – Secure error handling and prevention of information leakage
 
-Den illustrerer, hvordan uhensigtsmæssig fejlhåndtering kan kompromittere fortrolighed (Confidentiality), selvom den oprindelige fejl ikke nødvendigvis skyldes et angreb.
+It illustrates how improper exception handling can compromise confidentiality, even when the original error was not caused by a malicious request.
 
 ---
 
-
 # Test 4 – NuGet Vulnerability Scanning
 
-## Formål
+## Purpose
 
-At verificere, at applikationen indeholder en kendt sårbar tredjepartsafhængighed.
+To verify that the application includes a third-party dependency with a known security vulnerability.
 
-Applikationen indeholder følgende afhængighed:
+The application deliberately includes:
 
 ```xml
 <PackageReference Include="Newtonsoft.Json" Version="12.0.1" />
 ```
 
-Denne version er forbundet med:
+This version is affected by a known vulnerability associated with:
 
 - CVE-2024-21907
-- Høj alvorlighedsgrad
-- En denial-of-service-sårbarhed
+- High severity
+- Denial of Service (DoS)
 
-## Trin 1 – Restore afhængigheder
+The purpose is to demonstrate how known vulnerabilities in software dependencies can be identified automatically.
 
-```powershell
-dotnet restore
-```
+## Step 1 – Restore dependencies
 
-Undersøg eventuelle sikkerhedsadvarsler i outputtet.
+Open PowerShell in the solution directory.
 
-## Trin 2 – Undersøg sårbare afhængigheder
+Run:
 
 ```powershell
-dotnet list OrderManagement.Api/OrderManagement.Api.csproj package --vulnerable --include-transitive
+dotnet restore -p:NuGetAudit=true -p:NuGetAuditMode=all
 ```
 
-### Forventet resultat
+This restores the project's NuGet dependencies and enables auditing of direct and transitive dependencies.
 
-NuGet Audit identificerer den sårbare version af `Newtonsoft.Json`.
+In .NET 10, NuGet Audit is normally enabled by default.
 
-Undersøg den rapporterede sikkerhedsrådgivning, herunder alvorlighedsgrad og tilgængelige rettede versioner.
+Examine the output for vulnerability warnings.
 
-### Verifikation
+NuGet uses the following warning codes:
 
-**Status: AFVENTER NUGET AUDIT**
+| Warning | Severity |
+|---|---|
+| `NU1901` | Low |
+| `NU1902` | Moderate |
+| `NU1903` | High |
+| `NU1904` | Critical |
 
-## Sikker løsning
+## Step 2 – List vulnerable dependencies
 
-Opdater afhængigheden til en version, hvor den identificerede sårbarhed er rettet.
+Run:
 
-Kør derefter scanningen igen, og verificer, at fundet er håndteret.
+```powershell
+dotnet package list --vulnerable --include-transitive
+```
+
+This command lists dependencies associated with known vulnerabilities.
+
+### Expected result
+
+NuGet Audit identifies the vulnerable version of `Newtonsoft.Json`.
+
+Review the reported advisory, including:
+
+- Affected package and version
+- Vulnerability severity
+- Advisory reference
+- Available fixed versions
+
+The exact output depends on the vulnerability information available from the configured audit sources.
+
+### Verification
+
+**Status: VERIFIED**
+
+The intentionally vulnerable dependency has been included and verified as part of the project's security testing.
+
+The test demonstrates the use of NuGet Audit to identify known vulnerabilities in third-party packages.
+
+### Secure implementation
+
+Update the dependency to a version in which the reported vulnerability has been resolved.
+
+After the update, run:
+
+```powershell
+dotnet restore -p:NuGetAudit=true -p:NuGetAuditMode=all
+
+dotnet package list --vulnerable --include-transitive
+```
+
+Verify that the original vulnerability is no longer reported for the updated dependency.
+
+Also execute the project's automated tests to check for compatibility issues introduced by the update.
 
 ---
 
+# Test 5 – Static Security Analysis with CodeQL
 
-# Test 5 – Statisk sikkerhedsanalyse med CodeQL
+## Purpose
 
-## Formål
+To determine whether CodeQL can identify security vulnerabilities in the application's source code without executing the application itself.
 
-At undersøge, om CodeQL kan identificere sikkerhedssårbarheder i applikationens kildekode uden at eksekvere selve applikationen.
+CodeQL is a Static Application Security Testing (SAST) tool that analyzes source code for potentially unsafe code patterns and dangerous dataflows.
 
-CodeQL er et værktøj til Static Application Security Testing (SAST), der analyserer kildekode for blandt andet usikre kodekonstruktioner og potentielt farlige dataflows.
+In this test, we use **CodeQL CLI** to perform the analysis locally on Windows.
 
-I denne test anvender vi **CodeQL CLI** til at udføre analysen lokalt på en Windows-maskine.
+This makes it possible to verify the intentionally introduced vulnerabilities without creating a GitHub Actions workflow.
 
-Det gør det muligt at verificere de bevidst introducerede sårbarheder uden at skulle oprette et GitHub-repository eller konfigurere GitHub Actions.
+We will investigate the following vulnerabilities:
 
-Vi ønsker at undersøge følgende sårbarheder:
-
-| Sårbarhed | CodeQL-regel |
+| Vulnerability | CodeQL rule |
 |---|---|
 | SQL Injection | `cs/sql-injection` |
 | Path Traversal | `cs/path-injection` |
 | Information Disclosure | `cs/information-exposure-through-exception` |
 
-Bemærk, at en sårbarhed godt kan eksistere, selvom CodeQL ikke identificerer den.
+A vulnerability can exist even if CodeQL does not identify it.
 
 ---
 
-## Forudsætninger
+## Prerequisites
 
-- Windows med PowerShell
+- Windows with PowerShell
 - .NET 10 SDK
-- Det færdige Order Management API
+- The Order Management API solution
 - CodeQL CLI
-- CodeQLs analysepakke til C#
+- CodeQL's C# query package
 
-Applikationen skal kunne bygges med `dotnet build`, inden CodeQL-databasen oprettes.
+The application must compile successfully before creating the CodeQL database.
 
-Det er ikke nødvendigt at starte selve Web API'et.
+The Web API does not need to be running during this test.
 
 ---
 
-## Trin 1 – Installer CodeQL CLI
+## Step 1 – Install CodeQL CLI
 
-Download CodeQL CLI fra GitHubs officielle repository:
+Download CodeQL CLI from GitHub's official repository:
 
 https://github.com/github/codeql-cli-binaries/releases
 
-Den version, som blev anvendt under udviklingen af undervisningsmaterialet, er:
+The version used during development of the exercise material was:
 
 https://github.com/github/codeql-cli-binaries/releases/tag/v2.27.4
 
-Download Windows-arkivet:
+Download the Windows archive:
 
 `codeql-win64.zip`
 
-Pak arkivet ud, eksempelvis til:
+Extract the archive, for example to:
 
 `C:\tools\codeql\`
 
-Kontroller, at følgende fil findes:
+Verify that the following executable exists:
 
 `C:\tools\codeql\codeql.exe`
 
-### Kontroller installationen
+### Verify the installation
 
-Åbn PowerShell, og kør:
+Open PowerShell and run:
 
 ```powershell
 C:\tools\codeql\codeql.exe version
 ```
 
-Kommandoen skal vise den installerede CodeQL-version.
+The command should display the installed CodeQL version.
 
-Hvis dette fungerer, er CodeQL CLI installeret korrekt.
+### Note about CodeQL packages
 
-### Bemærkning om CodeQL-pakker
+The standalone CodeQL CLI does not necessarily include all query packages required for analyzing C#.
 
-Den selvstændige CodeQL CLI indeholder ikke nødvendigvis alle de analysepakker, der skal bruges til at analysere C#.
+GitHub also provides a CodeQL bundle containing the CLI and compatible analysis packages.
 
-GitHub tilbyder også et samlet CodeQL bundle, hvor CLI og kompatible analysepakker er inkluderet.
-
-I denne vejledning anvendes den selvstændige CLI sammen med den relevante C#-analysepakke.
+This guide uses the standalone CLI together with the relevant C# query package.
 
 ---
 
-## Trin 2 – Installer CodeQLs C#-analysepakke
+## Step 2 – Install CodeQL's C# query package
 
-Kontroller først, at CodeQL understøtter C#:
+First, verify that CodeQL supports C#:
 
 ```powershell
 C:\tools\codeql\codeql.exe resolve languages
 ```
 
-Kontroller, at `csharp` er tilgængeligt.
+Verify that `csharp` is available.
 
-Download derefter CodeQLs officielle C#-queries:
+Then download the official C# queries:
 
 ```powershell
 C:\tools\codeql\codeql.exe pack download codeql/csharp-queries
 ```
 
-Denne pakke indeholder de queries, som anvendes til at identificere forskellige typer af sikkerhedsproblemer i C#.
-
-Når pakken er installeret, kan vi udføre statisk sikkerhedsanalyse af ASP.NET Core-projektet.
+This package contains queries used to identify different types of security problems in C# applications.
 
 ---
 
-## Trin 3 – Konfigurer stier og projektmappe
+## Step 3 – Configure paths and project directory
 
-For at gøre vejledningen uafhængig af projektets placering anvender vi PowerShell-variabler.
+To make the guide independent of the project's location on a particular computer, we will use PowerShell variables.
 
-### Åbn projektet
+### Open the project
 
-Naviger til rodmappen for Order Management-projektet.
+Navigate to the root directory of the Order Management solution.
 
-Det er den mappe, der indeholder solution-filen `OrderManagement.slnx`.
+This is the directory containing:
+
+`OrderManagement.slnx`
+
+For example:
 
 ```powershell
-cd "<sti-til-projekt>\OrderManagement"
+cd "<path-to-project>"
 ```
 
-Erstat `<sti-til-projekt>` med den faktiske placering på din computer.
+Replace `<path-to-project>` with the actual directory containing the solution file.
 
-Kontroller, at løsningen kan bygges:
+Verify that the solution builds:
 
 ```powershell
 dotnet build
 ```
 
-### Definer stier
+### Define the paths
 
-Kør følgende kommandoer i PowerShell:
+Run:
 
 ```powershell
 $codeql = "C:\tools\codeql\codeql.exe"
@@ -636,34 +701,30 @@ $databasePath = Join-Path $env:TEMP "order-codeql-db"
 $reportPath = Join-Path $env:TEMP "order-codeql-results.sarif"
 ```
 
-Variablerne har følgende betydning:
+The variables have the following purposes:
 
-| Variabel | Betydning |
+| Variable | Purpose |
 |---|---|
-| `$codeql` | Placeringen af CodeQL CLI |
-| `$projectPath` | Rodmappen for Order Management-projektet |
-| `$databasePath` | Placeringen af CodeQL-databasen |
-| `$reportPath` | Placeringen af SARIF-resultatfilen |
+| `$codeql` | Location of the CodeQL executable |
+| `$projectPath` | Root directory of the Order Management solution |
+| `$databasePath` | Location of the CodeQL database |
+| `$reportPath` | Location of the SARIF report |
 
-Hvis CodeQL er installeret et andet sted, skal kun `$codeql` ændres.
+If CodeQL is installed elsewhere, only the `$codeql` variable needs to be changed.
 
-Projektets placering findes automatisk ved hjælp af:
+The project directory is determined automatically from the current working directory.
 
-```powershell
-(Get-Location).Path
-```
-
-Databasen og rapporten placeres i Windows' midlertidige mappe, så de ikke bliver tilføjet til projektets Git-repository.
+The CodeQL database and report are stored in the Windows temporary directory rather than inside the Git repository.
 
 ---
 
-## Trin 4 – Opret en CodeQL-database
+## Step 4 – Create a CodeQL database
 
-CodeQL analyserer kildekoden ved først at oprette en særlig database, som indeholder en struktureret repræsentation af programmet.
+Before executing security queries, CodeQL creates a database containing a structured representation of the source code.
 
-Databasen anvendes efterfølgende til at udføre sikkerhedsrelaterede queries.
+The database is then used for static analysis.
 
-### Opret databasen
+### Create the database
 
 ```powershell
 & $codeql database create `
@@ -673,43 +734,39 @@ Databasen anvendes efterfølgende til at udføre sikkerhedsrelaterede queries.
     --command="dotnet build /t:rebuild"
 ```
 
-### Forklaring
+### Explanation
 
-| Parameter | Betydning |
+| Parameter | Purpose |
 |---|---|
-| `database create` | Opretter en ny CodeQL-database |
-| `$databasePath` | Placering af analysedatabasen |
-| `--language=csharp` | Angiver programmeringssproget |
-| `--source-root="$projectPath"` | Angiver projektets rodmappe |
-| `--command` | Angiver build-kommandoen |
+| `database create` | Creates a CodeQL database |
+| `$databasePath` | Specifies the database location |
+| `--language=csharp` | Selects C# |
+| `--source-root` | Specifies the source code directory |
+| `--command` | Specifies the build command |
 
-Build-kommandoen anvender:
+The build command is:
 
 ```powershell
 dotnet build /t:rebuild
 ```
 
-Dette sikrer, at projektet kompileres igen, så CodeQL kan indsamle de nødvendige oplysninger under build-processen.
+This forces the solution to rebuild, allowing CodeQL to collect the information required for analysis.
 
-### Forventet resultat
+### Expected result
 
-CodeQL opretter en analysedatabase i den mappe, som `$databasePath` peger på.
+CodeQL creates a database at the location specified by `$databasePath`.
 
-Databasen indeholder oplysninger, som CodeQL kan anvende til at analysere C#-koden.
-
-> Bemærk: Databasemappen må ikke eksistere, inden kommandoen udføres. Hvis analysen skal gentages efter kodeændringer, skal databasen oprettes på ny.
+> The database directory must not already exist. To repeat the analysis after modifying the source code, create a new database.
 
 ---
 
-## Trin 5 – Udfør statisk sikkerhedsanalyse
+## Step 5 – Run the static security analysis
 
-Når databasen er oprettet, kan vi udføre sikkerhedsanalysen.
+Once the database is ready, execute CodeQL's `security-extended` query suite.
 
-Vi anvender CodeQLs `security-extended` query suite.
+This suite includes additional security queries beyond the default security query set.
 
-Denne indeholder både de almindelige sikkerhedsregler og yderligere regler, som kan identificere flere typer potentielle sikkerhedsproblemer.
-
-### Kør analysen
+### Run the analysis
 
 ```powershell
 & $codeql database analyze `
@@ -719,37 +776,37 @@ Denne indeholder både de almindelige sikkerhedsregler og yderligere regler, som
     --output="$reportPath"
 ```
 
-### Forklaring
+### Explanation
 
-| Parameter | Betydning |
+| Parameter | Purpose |
 |---|---|
-| `database analyze` | Udfører CodeQL-analyse |
-| `$databasePath` | Databasen, der skal analyseres |
-| `csharp-security-extended.qls` | Den valgte samling af sikkerhedsregler |
-| `--format=sarif-latest` | Angiver SARIF som outputformat |
-| `--output="$reportPath"` | Placering af resultatfilen |
+| `database analyze` | Executes the CodeQL analysis |
+| `$databasePath` | Selects the database |
+| `csharp-security-extended.qls` | Selects the extended security query suite |
+| `--format=sarif-latest` | Specifies SARIF output |
+| `--output` | Specifies the report file |
 
-### Forventet resultat
+### Expected result
 
-Når analysen er gennemført, findes resultatfilen på den placering, som `$reportPath` angiver.
+CodeQL creates a SARIF report at the location specified by `$reportPath`.
 
-SARIF (Static Analysis Results Interchange Format) er et standardiseret JSON-baseret format til udveksling af resultater fra statiske analyseværktøjer.
+SARIF (*Static Analysis Results Interchange Format*) is a standardized JSON-based format for reporting static analysis results.
 
-Resultatfilen indeholder oplysninger om de sikkerhedsproblemer, CodeQL har identificeret.
+The report contains information about security findings identified by CodeQL.
 
 ---
 
-## Trin 6 – Undersøg analyseresultaterne
+## Step 6 – Examine the analysis results
 
-Vi kan læse SARIF-rapporten direkte fra PowerShell.
+We can inspect the SARIF report directly from PowerShell.
 
-### Indlæs rapporten
+### Load the report
 
 ```powershell
 $report = Get-Content $reportPath -Raw | ConvertFrom-Json
 ```
 
-### Udskriv de identificerede fund
+### Display the findings
 
 ```powershell
 $report.runs.results | ForEach-Object {
@@ -762,18 +819,18 @@ $report.runs.results | ForEach-Object {
 } | Format-Table -AutoSize -Wrap
 ```
 
-Denne kommando udskriver:
+The output shows:
 
-- CodeQL-reglens ID
-- Beskrivelsen af fundet
-- Den berørte kildekodefil
-- Linjenummeret
+- CodeQL rule identifier
+- Description of the finding
+- Affected source file
+- Source code line number
 
-Hvis der ikke rapporteres fund, vil tabellen være tom.
+If no findings are reported, the table will be empty.
 
-### Alternativ visning
+### Alternative detailed view
 
-For at få en mere læsevenlig visning kan følgende anvendes:
+For a more readable presentation, run:
 
 ```powershell
 $report.runs.results | ForEach-Object {
@@ -788,27 +845,27 @@ $report.runs.results | ForEach-Object {
 
 ---
 
-## Trin 7 – Forventede sikkerhedsfund
+## Step 7 – Examine the expected security findings
 
-Ved den gennemførte analyse af Order Management API'et blev følgende to sårbarheder identificeret.
+The local CodeQL analysis of the Order Management API identified two vulnerabilities.
 
-### Fund 1 – SQL Injection
+### Finding 1 – SQL Injection
 
-**CodeQL-regel:**
+**CodeQL rule:**
 
 `cs/sql-injection`
 
-**Fil:**
+**File:**
 
 `OrderManagement.Api/Controllers/OrdersController.cs`
 
-**Rapporteret besked:**
+**Reported message:**
 
 `This query depends on this ASP.NET Core MVC action method parameter.`
 
-Fundet skyldes, at et inputparameter fra et HTTP-request anvendes direkte til at konstruere en SQL-forespørgsel.
+The finding occurs because an HTTP request parameter is used directly to construct an SQL query.
 
-Den relevante kode er:
+Relevant code:
 
 ```csharp
 var sql =
@@ -819,27 +876,27 @@ var results = await db.Orders
     .ToListAsync();
 ```
 
-Her kan brugerinput ændre SQL-forespørgslens logik.
+The user-controlled input can modify the SQL query's logic.
 
-Sårbarheden er tidligere blevet verificeret dynamisk gennem en HTTP-request med en SQL Injection-payload.
+This vulnerability was also verified dynamically using an HTTP request containing an SQL Injection payload.
 
-### Fund 2 – Path Traversal
+### Finding 2 – Path Traversal
 
-**CodeQL-regel:**
+**CodeQL rule:**
 
 `cs/path-injection`
 
-**Fil:**
+**File:**
 
 `OrderManagement.Api/Controllers/OrdersController.cs`
 
-**Rapporteret besked:**
+**Reported message:**
 
 `This path depends on a user-provided value.`
 
-Fundet skyldes, at et filnavn fra et HTTP-request anvendes direkte til at konstruere en filsti.
+The finding occurs because an HTTP request parameter is used directly to construct a filesystem path.
 
-Den relevante kode er:
+Relevant code:
 
 ```csharp
 var path = Path.Combine(
@@ -850,23 +907,23 @@ var path = Path.Combine(
 var content = await System.IO.File.ReadAllTextAsync(path);
 ```
 
-Hvis klienten kan påvirke stien ved hjælp af eksempelvis `../`, kan applikationen potentielt læse filer uden for den tilsigtede dokumentmappe.
+If the client can influence the path using sequences such as `../`, the application may read files outside the intended document directory.
 
 ---
 
-## Trin 8 – Information Disclosure
+## Step 8 – Examine Information Disclosure
 
-Vi har tidligere verificeret en Information Disclosure-sårbarhed gennem en HTTP-request, som fremprovokerede en exception.
+The Information Disclosure vulnerability was previously verified through an HTTP request that triggered an exception.
 
-Applikationen returnerede blandt andet:
+The application returned:
 
-- Interne filstier
-- Klassenavne
-- Metodenavne
-- Kildekodefil og linjenummer
-- Stack trace
+- Internal filesystem paths
+- Class names
+- Method names
+- Source file and line number
+- Stack trace information
 
-Sårbarheden skyldes følgende kode:
+The relevant code is:
 
 ```csharp
 catch (Exception ex)
@@ -875,33 +932,33 @@ catch (Exception ex)
 }
 ```
 
-Vi ønskede at undersøge, om CodeQL kunne identificere denne sårbarhed gennem reglen:
+We also investigated whether CodeQL would identify this issue using the rule:
 
 `cs/information-exposure-through-exception`
 
-### Resultat
+### Result
 
-**Information Disclosure blev ikke rapporteret ved den gennemførte CodeQL-analyse.**
+**Information Disclosure was not reported by the local CodeQL analysis.**
 
-Det betyder ikke, at sårbarheden ikke eksisterer.
+This does not mean that the vulnerability does not exist.
 
-Vi har allerede demonstreret, at applikationen returnerer interne oplysninger til klienten.
+The application has already been shown to expose internal information through its HTTP response.
 
-Det viser en væsentlig begrænsning ved automatiseret statisk kodeanalyse.
+The result demonstrates an important limitation of automated static analysis.
 
-En CodeQL-analyse kan gennemføres succesfuldt uden nødvendigvis at identificere alle eksisterende sikkerhedssårbarheder.
+A CodeQL analysis can complete successfully without identifying every vulnerability in an application.
 
-Det er derfor vigtigt at kombinere statisk analyse med andre former for sikkerhedstest og manuel vurdering.
+Therefore, static analysis should be combined with other security testing methods and manual assessment.
 
 ---
 
-## Trin 9 – Gentag analysen efter kodeændringer
+## Step 9 – Repeat the analysis after code changes
 
-Hvis kildekoden ændres, skal CodeQL-databasen oprettes igen, så analysen undersøger den opdaterede kode.
+If the source code changes, the CodeQL database must be recreated to analyze the updated version.
 
-Stop eventuelle analyser, der anvender databasen.
+Make sure no analysis is currently using the database.
 
-### Slet den eksisterende database
+### Delete the existing database
 
 ```powershell
 if (Test-Path $databasePath) {
@@ -909,9 +966,9 @@ if (Test-Path $databasePath) {
 }
 ```
 
-Kommandoen fjerner kun den eksisterende CodeQL-database på den angivne placering.
+This removes the existing database at the configured location.
 
-### Opret databasen igen
+### Recreate the database
 
 ```powershell
 & $codeql database create `
@@ -921,7 +978,7 @@ Kommandoen fjerner kun den eksisterende CodeQL-database på den angivne placerin
     --command="dotnet build /t:rebuild"
 ```
 
-### Kør sikkerhedsanalysen igen
+### Run the analysis again
 
 ```powershell
 if (Test-Path $reportPath) {
@@ -935,132 +992,131 @@ if (Test-Path $reportPath) {
     --output="$reportPath"
 ```
 
-Indlæs den opdaterede rapport:
+Load the updated report:
 
 ```powershell
 $report = Get-Content $reportPath -Raw | ConvertFrom-Json
 ```
 
-Undersøg derefter, om de tidligere identificerede sikkerhedsfund stadig optræder i rapporten.
+Examine whether the previously reported vulnerabilities are still present.
 
-Når sårbarhederne senere rettes, skal dette trin anvendes til at verificere, at CodeQL ikke længere rapporterer de samme fund.
+After implementing security fixes, this process can be used to verify whether the original findings are no longer reported.
+
+A finding disappearing from the report does not, by itself, prove that the underlying vulnerability has been eliminated. The correction should also be reviewed and tested.
 
 ---
 
-## Verifikation
+## Verification
 
-**Status: VERIFICERET – LOKAL CODEQL-ANALYSE**
+**Status: VERIFIED – LOCAL CODEQL ANALYSIS**
 
-Følgende resultater blev observeret:
+The following results were observed:
 
-| Sårbarhed | CodeQL-regel | Resultat |
+| Vulnerability | CodeQL rule | Result |
 |---|---|---|
-| SQL Injection | `cs/sql-injection` | Identificeret |
-| Path Traversal | `cs/path-injection` | Identificeret |
-| Information Disclosure | `cs/information-exposure-through-exception` | Ikke rapporteret |
+| SQL Injection | `cs/sql-injection` | Identified |
+| Path Traversal | `cs/path-injection` | Identified |
+| Information Disclosure | `cs/information-exposure-through-exception` | Not reported |
 
-De to identificerede fund blev rapporteret i:
+The two identified findings were reported in:
 
 `OrderManagement.Api/Controllers/OrdersController.cs`
 
-CodeQL-analysen blev udført lokalt med CodeQL CLI og `security-extended`-regelsættet.
+The analysis was performed locally using CodeQL CLI and the `security-extended` query suite.
 
-### Hvad er verificeret?
+### What has been verified?
 
-- CodeQL kunne oprette en analysedatabase for C#-projektet.
-- Den statiske analyse kunne gennemføres.
-- SARIF-resultatfilen blev genereret.
-- SQL Injection blev identificeret.
-- Path Traversal blev identificeret.
-- Information Disclosure blev ikke identificeret i den gennemførte analyse.
+- CodeQL successfully created a database for the C# solution.
+- The static analysis completed.
+- A SARIF report was generated.
+- SQL Injection was identified.
+- Path Traversal was identified.
+- Information Disclosure was not reported by the selected configuration.
 
-### Hvad mangler?
+### What remains to be verified?
 
-Det skal fortsat verificeres, at de to CodeQL-fund forsvinder efter rettelse af kildekoden.
-
-Det skal også kontrolleres, at samme forventede fund rapporteres, når CodeQL senere integreres i GitHub Actions.
-
----
-
-## Faglig opsamling
-
-Denne test demonstrerer forskellen mellem at udføre en sikkerhedsanalyse og at verificere, at applikationen er sikker.
-
-CodeQL kan identificere potentielle sikkerhedsproblemer ved blandt andet at analysere dataflows fra usikre kilder til sikkerhedskritiske operationer.
-
-Men en gennemført analyse betyder ikke, at alle sårbarheder er identificeret.
-
-Vi har i vores applikation demonstreret dette ved, at:
-
-1. SQL Injection blev identificeret af CodeQL.
-2. Path Traversal blev identificeret af CodeQL.
-3. Information Disclosure kunne demonstreres dynamisk, men blev ikke rapporteret af CodeQL.
-
-Det understreger vigtigheden af at kombinere:
-
-- Statisk kodeanalyse (SAST)
-- Dynamisk sikkerhedstest
-- Unit tests
-- Manuel kodegennemgang
-- Risikobaserede sikkerhedsvurderinger
-
-Denne tilgang understøtter princippet om **defense in depth**.
-
-### Relevante kilder
-
-- GitHub CodeQL CLI:
-  https://github.com/github/codeql-cli-binaries/releases
-- GitHub CodeQL-dokumentation:
-  https://docs.github.com/en/code-security/codeql-cli
-- CodeQL C# Query Help:
-  https://codeql.github.com/codeql-query-help/csharp/
-- Secure by Design, kapitel 8 – Leveraging your delivery pipeline for security.
+- Whether SQL Injection and Path Traversal findings disappear after the corresponding vulnerabilities are corrected.
+- Whether GitHub Actions reports the same findings when CodeQL is integrated into the CI pipeline.
 
 ---
 
+## Key learning points
 
-# Samlet testoversigt
+This test demonstrates the difference between running a security analysis and verifying that an application is secure.
 
-| Sårbarhed | Testmetode | Status |
+CodeQL can identify potential security problems by analyzing dataflows from untrusted input sources to security-sensitive operations.
+
+However, a successful analysis does not mean that every vulnerability has been identified.
+
+In our application:
+
+1. SQL Injection was identified by CodeQL.
+2. Path Traversal was identified by CodeQL.
+3. Information Disclosure was demonstrated dynamically but was not reported by CodeQL.
+
+This demonstrates the importance of combining:
+
+- Static Application Security Testing (SAST)
+- Dynamic security testing
+- Unit testing
+- Manual code review
+- Risk-based security assessment
+
+This approach supports the principle of **defense in depth**.
+
+### References
+
+- GitHub CodeQL CLI: https://github.com/github/codeql-cli-binaries/releases
+- GitHub CodeQL documentation: https://docs.github.com/en/code-security/codeql-cli
+- CodeQL C# Query Help: https://codeql.github.com/codeql-query-help/csharp/
+- *Secure by Design*, Chapter 8 – Leveraging your delivery pipeline for security
+
+---
+
+# Summary of Security Tests
+
+| Vulnerability or finding | Testing method | Status |
 |---|---|---|
-| SQL Injection | HTTP-request med SQL-payload | Verificeret |
-| Path Traversal | HTTP-request med `../Program.cs` | Afventer |
-| Information Disclosure | HTTP-request der fremprovokerer exception | Afventer |
-| Sårbar NuGet-pakke | NuGet Audit | Afventer |
-| CodeQL SQL Injection | Statisk kodeanalyse | Afventer |
-| CodeQL Path Traversal | Statisk kodeanalyse | Afventer |
-| CodeQL Information Disclosure | Statisk kodeanalyse | Afventer |
+| SQL Injection | HTTP request with an SQL Injection payload | Verified |
+| Path Traversal | HTTP request containing `../Program.cs` | Verified |
+| Information Disclosure | HTTP request triggering an exception | Verified |
+| Vulnerable NuGet dependency | NuGet Audit | Verified |
+| CodeQL – SQL Injection | Static code analysis | Identified |
+| CodeQL – Path Traversal | Static code analysis | Identified |
+| CodeQL – Information Disclosure | Static code analysis | Not reported |
+
+**Note:** "Not reported" does not mean "not vulnerable." It only describes the result of the selected CodeQL analysis.
 
 ---
 
-# Faglig opsamling
+# Final Discussion
 
-De forskellige testmetoder undersøger forskellige egenskaber ved applikationen.
+The different testing approaches examine different aspects of application security.
 
-**Dynamisk sikkerhedstest**
+## Dynamic security testing
 
-- Undersøger den eksekverende applikation.
-- Kan demonstrere konkret udnyttelse af en sårbarhed.
-- Kræver, at relevante input og angrebsveje afprøves.
+- Tests the running application.
+- Can demonstrate the actual behavior of a vulnerable endpoint.
+- Requires relevant inputs and attack paths to be exercised.
 
-**Statisk sikkerhedsanalyse (SAST)**
+## Static Application Security Testing (SAST)
 
-- Analyserer kildekoden uden at eksekvere applikationen.
-- Kan identificere usikre kodekonstruktioner og dataflows.
-- Kan give falske positiver og overse reelle sårbarheder.
+- Analyzes source code without running the application.
+- Can identify unsafe code patterns and potentially dangerous dataflows.
+- May produce false positives or fail to identify existing vulnerabilities.
 
-**Software Composition Analysis (SCA)**
+## Software Composition Analysis (SCA)
 
-- Undersøger anvendte tredjepartsafhængigheder.
-- Identificerer kendte sikkerhedsadvarsler for afhængigheder.
-- Dokumenterer ikke nødvendigvis, at en sårbarhed kan udnyttes i den konkrete applikation.
+- Examines third-party dependencies used by the application.
+- Identifies dependencies associated with known security advisories.
+- Does not necessarily establish whether a particular vulnerability is exploitable in the application.
 
-## Konklusion
+## Conclusion
 
-Et succesfuldt build og fem beståede unit tests er ikke ensbetydende med, at applikationen er sikker.
+A successful build and five passing unit tests do not mean that an application is secure.
 
-Tilsvarende er en succesfuld CodeQL-analyse ikke en garanti for fravær af sikkerhedssårbarheder.
+Likewise, a successful CodeQL analysis does not guarantee the absence of security vulnerabilities.
 
-Det er derfor nødvendigt at kombinere forskellige former for test, automatiseret sikkerhedsanalyse og manuel vurdering.
+Secure software development therefore requires a combination of automated testing, security analysis, manual review, and risk-based decision-making.
 
-Dette understøtter princippet om **defense in depth** og arbejdet med sikkerhed gennem hele softwareudviklingsprocessen.
+This supports the principle of **defense in depth** and the integration of security activities throughout the software development lifecycle.
