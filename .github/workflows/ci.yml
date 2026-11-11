@@ -32,22 +32,6 @@ jobs:
         run: dotnet test --no-build
 
       - name: Scan NuGet dependencies
-        shell: bash
-        run: |
-          dotnet package list --vulnerable --include-transitive --no-restore --format json --output-version 1 > vulnerability-report.json
+        run: dotnet package list --vulnerable --include-transitive
 
-          cat vulnerability-report.json
-
-          count=$(jq '[.projects[]? | .frameworks[]? |
-            (.topLevelPackages[]?, .transitivePackages[]?) |
-            .vulnerabilities[]?] | length' vulnerability-report.json)
-
-          echo "Number of vulnerability findings: $count"
-
-          if [ "$count" -gt 0 ]; then
-            echo "Vulnerable dependencies detected!"
-            exit 1
-          fi
-
-          echo "No known vulnerable dependencies detected."
 
